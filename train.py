@@ -15,8 +15,7 @@ from tensorflow.keras.layers.experimental import preprocessing
 # Read, then decode for py2 compat.
 path_to_file = tf.keras.utils.get_file(
  'shakespeare.txt',
-'https://storage.googleapis.com/download.tensorflow.org/data/shakespea
-re.txt')
+'https://storage.googleapis.com/download.tensorflow.org/data/shakespeare.txt')
 text = open(path_to_file, 'rb').read().decode(encoding='utf-8')
 # The unique characters in the file
 vocab = sorted(set(text))
@@ -78,22 +77,22 @@ class GenModelv0(tf.keras.Model):
         base_config["rnn_units"] = self.rnn_units
         return base_config
  
- @classmethod
- def from_config(cls, config):
-     cls = cls(**config)
-     cls.embedding = tf.keras.layers.Embedding(
-             config["vocab_size"],
-             config["embedding_dim"], mask_zero=True)
-     cls.gru = tf.keras.layers.GRU(
-             config["rnn_units"],
-             return_sequences=True,
-             return_state=True)
-     cls.dense = tf.keras.layers.Dense(config["vocab_size"])
-     cls.vocab_size = config["vocab_size"]
-     cls.embedding_dim = config["embedding_dim"]
-     cls.rnn_units = config["rnn_units"]
-     
-     return cls
+    @classmethod
+    def from_config(cls, config):
+         cls = cls(**config)
+         cls.embedding = tf.keras.layers.Embedding(
+                 config["vocab_size"],
+                 config["embedding_dim"], mask_zero=True)
+         cls.gru = tf.keras.layers.GRU(
+                 config["rnn_units"],
+                 return_sequences=True,
+                 return_state=True)
+         cls.dense = tf.keras.layers.Dense(config["vocab_size"])
+         cls.vocab_size = config["vocab_size"]
+         cls.embedding_dim = config["embedding_dim"]
+         cls.rnn_units = config["rnn_units"]
+         
+         return cls
  
     def prepare_training_dataset(text:str):
         converted_string = ids_from_chars(
@@ -115,8 +114,8 @@ class GenModelv0(tf.keras.Model):
         
         return dataset
     
- class OneStep(tf.keras.Model):
-     def __init__(self,
+class OneStep(tf.keras.Model):
+    def __init__(self,
                   model,
                   chars_from_ids,
                   ids_from_chars,
@@ -128,18 +127,18 @@ class GenModelv0(tf.keras.Model):
          self.ids_from_chars = ids_from_chars
  # Create a mask to prevent "[UNK]" from being generated.
          skip_ids = self.ids_from_chars(
-                 ['[UNK]'])[:, None]
+             ['[UNK]'])[:, None]
          sparse_mask = tf.SparseTensor(
  # Put a -inf at each bad index.
-         values=[-float('inf')]*len(skip_ids),
-         indices=skip_ids,
+             values=[-float('inf')]*len(skip_ids),
+             indices=skip_ids,
  # Match the shape to the vocabulary
-         dense_shape=[len(
+             dense_shape=[len(
                  ids_from_chars.get_vocabulary())])
-    self.prediction_mask = tf.sparse.to_dense(
+         self.prediction_mask = tf.sparse.to_dense(
             sparse_mask)
- @tf.function
- def generate_one_step(self, inputs, states=None):
+@tf.function
+def generate_one_step(self, inputs, states=None):
      # Convert strings to token IDs.
      inputs = str(inputs)
      input_chars = tf.strings.unicode_split(
@@ -169,3 +168,98 @@ class GenModelv0(tf.keras.Model):
              predicted_ids)
  # Return the characters and model state.
      return predicted_chars, states
+def generate_text(model,
+                  n_characters=1000,
+                  query='ROMEO:',
+                  chars_from_ids=chars_from_ids,
+                  ids_from_chars=ids_from_chars):
+     start = time.time()
+     states = None
+     next_char = query
+     result = [next_char]
+     one_step_model = OneStep(model,
+         chars_from_ids, ids_from_chars)
+     for n in range(n_characters):
+         next_char, states = one_step_model.generate_one_step(
+            next_char, states=states)
+         result.append(next_char)
+        
+     result = tf.strings.join(result)
+     end = time.time()
+     return {'text':result[0].numpy().decode('utf-8'),
+            'runtime': end - start}
+def get_model(file_path):
+     model = GenModelv0(
+ # Be sure the vocabulary size matches the `StringLookup` layers.
+         vocab_size=len(ids_from_chars.get_vocabulary()),
+         embedding_dim=EMBEDDING_DIM,
+         rnn_units=RNN_UNITS)
+     loss=tf.losses.SparseCategoricalCrossentropy(from_logits=True)
+     metrics = [
+         tf.metrics.sparse_categorical_accuracy
+     ]
+     model.compile(
+         optimizer='adam',
+         loss=loss,
+         metrics=metrics)
+     model.load_weights(file_path)
+     return model
+ 
+def train(epochs=20):
+     
+     train_text = text[:int(len(text)*0.8)]
+     with open("train.txt", 'wb') as train:
+         train.write(train_text.encode(encoding='utf-8'))
+     test_text = text[:-int(len(text)*0.2)]
+     with open("test.txt", 'wb') as test:
+         test.write(test_text.encode(encoding='utf-8'))
+     dataset = prepare_training_dataset(train_text)
+     test_dataset = prepare_training_dataset(test_text)
+     dataset = (
+         dataset
+         .shuffle(BUFFER_SIZE)
+         .batch(BATCH_SIZE, drop_remainder=True)
+         .prefetch(tf.data.experimental.AUTOTUNE))
+     test_dataset = (
+         test_dataset
+         .shuffle(BUFFER_SIZE)
+         .batch(BATCH_SIZE, drop_remainder=True)
+         .prefetch(tf.data.experimental.AUTOTUNE))
+     model = GenModelv0(
+ # Be sure the vocabulary size matches the `StringLookup` layers.
+         vocab_size=len(ids_from_chars.get_vocabulary()),
+         embedding_dim=EMBEDDING_DIM,
+         rnn_units=RNN_UNITS)
+     loss = tf.losses.SparseCategoricalCrossentropy(
+         from_logits=True)
+     metrics = [
+         tf.metrics.sparse_categorical_accuracy
+     ]
+     model.compile(
+         optimizer='adam',
+         loss=loss,
+         metrics=metrics)
+ # Directory where the checkpoints will be saved
+     checkpoint_dir = './training_checkpoints'
+ # Name of the checkpoint files
+     checkpoint_prefix = os.path.join(
+         checkpoint_dir, "ckpt_{epoch}")
+     checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+         filepath=checkpoint_prefix,
+         save_weights_only=True)
+     history = model.fit(
+         dataset,
+         epochs=epochs,
+         callbacks=[checkpoint_callback],
+         validation_data=test_dataset)
+     model.save_weights(os.path.join(os.environ["MODEL_DIR"],
+                os.environ["MODEL_FILE"]))
+     
+if __name__ == '__main__':
+     if len(sys.argv) > 1:
+         epochs = sys.argv[1] if len(sys.argv) >= 1 else 20
+         if not isinstance(epochs, int):
+             epochs = 20
+     else:
+         epochs = 1
+     train(epochs)
