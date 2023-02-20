@@ -1,7 +1,16 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Mon Feb 20 18:16:49 2023
 
-@author: User
-"""
+flask
+tensorflow>=2.4.0
 
+FROM tensorflow/tensorflow:2.4.0
+ENV MODEL_DIR=./
+ENV MODEL_FILE=/model.tf
+COPY requirements.txt ./requirements.txt
+RUN pip install -r requirements.txt 
+СOPY train.py ./train.py
+COPY app.py ./app.py
+RUN python3 train.py 20
+COPY train.txt ./train.txt
+COPY test.txt ./test.txt
+EXPOSE 5000
+CMD ["python3", "app.py"]
